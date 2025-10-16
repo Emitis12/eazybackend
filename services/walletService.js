@@ -1,6 +1,6 @@
 // services/walletService.js
 import { Wallet, WalletTransaction } from "../models/Wallet.js";
-import API from "../utils/api.js"; // for sending emails
+import { sendEmail } from "../services/emailService.js"; // use your email service
 
 // ===== Service charge percentages =====
 const RIDER_SERVICE_CHARGE = 20;   // 20%
@@ -15,8 +15,12 @@ const VENDOR_SERVICE_CHARGE = 20;  // 20%
  * @param {string} description
  */
 export const addTransaction = async (userId, type, amount, description) => {
-  const wallet = await Wallet.findOne({ where: { userId } });
-  if (!wallet) throw new Error("Wallet not found");
+  let wallet = await Wallet.findOne({ where: { userId } });
+
+  // Auto-create wallet if it doesn't exist
+  if (!wallet) {
+    wallet = await Wallet.create({ userId, balance: 0, serviceChargeTotal: 0 });
+  }
 
   if (type === "debit" && parseFloat(wallet.balance) < amount) {
     throw new Error("Insufficient wallet balance");
@@ -36,20 +40,19 @@ export const addTransaction = async (userId, type, amount, description) => {
 
   await wallet.save();
 
-  // ✅ Send email notification
+  // Send email notification (optional)
   try {
-    const res = await API.get(`/users/${userId}`);
-    const email = res.email;
+    const email = wallet.user?.email;
     if (email) {
       const subject = type === "credit" ? "Wallet Credited" : "Wallet Debited";
       const body = `
-        <p>Hi ${res.name},</p>
+        <p>Hi,</p>
         <p>Your wallet has been ${type === "credit" ? "credited" : "debited"} with <strong>${amount}</strong> units.</p>
         <p>Description: ${description}</p>
         <p>New Balance: <strong>${wallet.balance}</strong></p>
         <p>Reference: ${transaction.reference}</p>
       `;
-      await API.post("/mail/send", { to: email, subject, body });
+      await sendEmail(email, subject, body);
     }
   } catch (err) {
     console.warn("Wallet email notification failed:", err);
@@ -70,8 +73,11 @@ export const creditRiderWallet = async (riderId, deliveryFee) => {
   const serviceCharge = (deliveryFee * RIDER_SERVICE_CHARGE) / 100;
   const netAmount = deliveryFee - serviceCharge;
 
-  // Add net credit to wallet
+  // Credit net amount
   await addTransaction(riderId, "credit", netAmount, "Delivery completed");
+
+  // Record service charge as separate debit transaction
+  await addTransaction(riderId, "debit", serviceCharge, "Service charge for delivery");
 
   // Update rider's total service charge
   const wallet = await Wallet.findOne({ where: { userId: riderId } });
@@ -86,8 +92,11 @@ export const creditVendorWallet = async (vendorId, amount, description) => {
   const serviceCharge = (amount * VENDOR_SERVICE_CHARGE) / 100;
   const netAmount = amount - serviceCharge;
 
-  // Add net credit to wallet
+  // Credit net amount
   await addTransaction(vendorId, "credit", netAmount, description);
+
+  // Record service charge as separate debit transaction
+  await addTransaction(vendorId, "debit", serviceCharge, "Service charge for sale");
 
   // Update vendor's total service charge
   const wallet = await Wallet.findOne({ where: { userId: vendorId } });

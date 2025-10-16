@@ -17,6 +17,7 @@ Order.init(
 
     // Financials
     totalAmount: { type: DataTypes.DECIMAL(12,2), allowNull: false },
+    distanceKm: { type: DataTypes.DECIMAL(5,2), allowNull: true }, // distance for delivery fee calculation
     deliveryFee: { type: DataTypes.DECIMAL(12,2), defaultValue: 0.0 }, // for rider payouts
 
     // Status

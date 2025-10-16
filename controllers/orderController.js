@@ -15,8 +15,9 @@ export async function createOrder(req, res, next) {
 
     const order = await Order.create({
       ...rest,
-      userId: req.user.id,
-      deliveryFee
+      customerId: req.user.id,
+      deliveryFee,
+      distanceKm
     });
 
     res.json(order);
@@ -36,7 +37,7 @@ export async function assignOrder(req, res, next) {
 
 export async function getOrders(req, res, next) {
   try {
-    const orders = await Order.findAll({ where: { userId: req.user.id } });
+    const orders = await Order.findAll({ where: { customerId: req.user.id } });
     res.json(orders);
   } catch (err) {
     next(err);
@@ -56,27 +57,32 @@ export async function completeOrder(req, res, next) {
 
     // Update order status
     order.status = "completed";
+
+    // Ensure deliveryFee is set
+    if (!order.deliveryFee && order.distanceKm) {
+      order.deliveryFee = calculateDeliveryFee(order.distanceKm);
+    }
     await order.save();
 
     // ----- Wallet updates -----
     // Credit vendor with service charge deduction
-    const vendorResult = await creditVendorWallet(
+    const vendorWallet = await creditVendorWallet(
       order.vendorId,
-      order.totalAmount,
+      parseFloat(order.totalAmount),
       `Order #${order.id} completed`
     );
 
     // Credit rider with delivery fee minus service charge
-    let riderResult = null;
+    let riderWallet = null;
     if (order.riderId && order.deliveryFee) {
-      riderResult = await creditRiderWallet(order.riderId, order.deliveryFee);
+      riderWallet = await creditRiderWallet(order.riderId, parseFloat(order.deliveryFee));
     }
 
     res.json({
       message: "Order completed and wallets updated",
       order,
-      vendorWallet: vendorResult,
-      riderWallet: riderResult
+      vendorWallet,
+      riderWallet
     });
   } catch (error) {
     next(error);
